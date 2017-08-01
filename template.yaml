@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: openshift-kafka
+  annotations:
+    description: Apache Kafka
+    tags: messaging,streaming,kafka
+parameters:
+- name: NAME
+  description: Name prefix for each object created
+  required: true
+  value: openshift-kafka
+- name: JDK_VER
+  description: Java Development Kit version
+  required: true
+  value: "1.8.0"
+- name: KAFKA_VER
+  description: Apache Kafka version
+  required: true
+  value: "0.10.1.1"
+- name: SCALA_VER
+  description: Scala version included in Apache Kafka
+  required: true
+  value: "2.11"
+objects:
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: ${NAME}
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    name: ${NAME}-build
+    labels:
+      build: ${NAME}-build
+  spec:
+    triggers:
+      - type: ConfigChange
+      - type: ImageChange
+        ImageChange:
+          lastTriggeredNAMEID: 'registry.access.redhat.com/rhel7:latest'
+    runPolicy: Serial
+    source:
+      type: Git
+      git:
+        uri: 'https://github.com/miticojo/openshift-kafka'
+        ref: master
+    strategy:
+      type: Docker
+      dockerStrategy:
+        from:
+          kind: DockerImage
+          name: 'rhel7:latest'
+        env:
+          - name: KAFKA_VER
+            value: '${KAFKA_VER}'
+          - name: SCALA_VER
+            value: '${SCALA_VER}'
+          - name: JDK_VER
+            value: '${JDK_VER}'
+    output:
+      to:
+        kind: ImageStreamTag
+        name: '${NAME}:${KAFKA_VER}'
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: ${NAME}
+  spec:
+    replicas: 1
+    selector:
+      deploymentconfig: ${NAME}
+    template:
+      metadata:
+        labels:
+          deploymentconfig: ${NAME}
+      spec:
+        containers:
+        - name: kafka
+          image: '${NAME}:${KAFKA_VER}'
+          command:
+          - bin/kafka-server-start.sh
+          args:
+          - config/server.properties
+          - --override
+          - advertised.host.name=${NAME}
+          - --override
+          - log.segment.bytes=10485760
+          - --override
+          - log.retention.bytes=10485760
+          volumeMounts:
+          - mountPath: /tmp/kafka-logs
+            name: kafka-logs
+          ports:
+          - containerPort: 9092
+        - name: zookeeper
+          image: '${NAME}:${KAFKA_VER}'
+          command:
+          - bin/zookeeper-server-start.sh
+          args:
+          - config/zookeeper.properties
+          volumeMounts:
+          - mountPath: /tmp/zookeeper
+            name: zookeeper
+          ports:
+          - containerPort: 2181
+        volumes:
+        - name: kafka-logs
+          emptyDir: {}
+        - name: zookeeper
+          emptyDir: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${NAME}
+  spec:
+    ports:
+    - name: kafka
+      port: 9092
+    - name: zookeeper
+      port: 2181
+    selector:
+      deploymentconfig: ${NAME}
